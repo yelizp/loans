@@ -1,0 +1,10 @@
+{
+    "type":"record",
+    "name":"LoanSchema",
+    "namespace":"com.example.model",
+    "fields":[
+        {"name":"LoanId","type":"long"},
+        {"name":"AccountId","type":"long"},
+        {"name":"Amount","type":"double"}
+    ]
+}​​​​​​​​​​​​​​

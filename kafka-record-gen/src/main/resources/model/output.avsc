@@ -1,0 +1,11 @@
+{
+    "type":"record",
+    "name":"LoanAggSchema",
+    "namespace":"com.example.model",
+    "fields":[
+        {"name":"AccountType","type":"int"},
+        {"name":"TotalCount","type":"int"},
+        {"name":"TotalAmount","type":"double"},
+        {"name":"LastMinuteCount","type":"int"}
+    ]
+}

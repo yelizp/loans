@@ -1,0 +1,62 @@
+@REM https://docs.confluent.io/platform/current/quickstart/ce-docker-quickstart.html#ce-docker-quickstart
+@REM Pull docker-compose.yml
+curl --silent --output docker-compose.yml ^
+  https://raw.githubusercontent.com/confluentinc/cp-all-in-one/6.1.1-post/cp-all-in-one/docker-compose.yml
+
+@REM Start Confluent Platform with a separate container for each Confluent Platform component.
+docker-compose up -d
+
+@REM To verify that the services are up and running, run the following command:
+docker-compose ps
+
+@REM Start zookeeper
+docker run -d ^
+    --net=confluent ^
+    --name=zookeeper ^
+    -e ZOOKEEPER_CLIENT_PORT=2181 ^
+    confluentinc/cp-zookeeper:6.1.1
+
+start cmd /k docker logs zookeeper
+
+@REM Start kafka
+docker run -d ^
+    --net=confluent ^
+    --name=kafka ^
+    -e KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181 ^
+    -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092 ^
+    -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 ^
+    confluentinc/cp-kafka:6.1.1
+
+docker logs kafka
+
+@REM Create topic and produce data
+docker run ^
+  --net=confluent ^
+  --rm confluentinc/cp-kafka:6.1.1 ^
+  kafka-topics --create --topic foo --partitions 1 --replication-factor 1 ^
+  --if-not-exists --zookeeper zookeeper:2181
+
+@REM Verify that the topic was successfully created
+docker run ^
+  --net=confluent ^
+  --rm ^
+  confluentinc/cp-kafka:6.1.1 ^
+  kafka-topics --describe --topic foo --zookeeper zookeeper:2181
+
+@REM Publish data to your new topic
+docker run ^
+  --net=confluent ^
+  --rm ^
+  confluentinc/cp-kafka:6.1.1 ^
+  bash -c "seq 42 | kafka-console-producer --request-required-acks 1 ^
+  --broker-list kafka:9092 --topic foo && echo 'Produced 42 messages.'"
+
+@REM List topics
+docker run --net=confluent --rm confluentinc/cp-kafka:6.1.1 kafka-topics --list --zookeeper zookeeper:2181
+
+@REM Stop the Docker containers for Confluent:
+docker-compose stop
+
+@REM After stopping the Docker containers, run the following commands to prune the Docker system.
+@REM Running these commands deletes containers, networks, volumes, and images, freeing up disk space
+docker system prune -a --volumes --filter "label=io.confluent.docker"

@@ -1,0 +1,9 @@
+{
+   "type":"record",
+   "name":"AccountSchema",
+   "namespace" : "com.example.model",
+   "fields":[
+    {"name":"AccountId","type":"long"},
+    {"name":"AccountType","type":"int","valid_values":"1,2,3,4" }
+   ]
+}

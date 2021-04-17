@@ -1,0 +1,7 @@
+customer-loans/target
+customer-loans/.idea
+customer-loans/data
+customer-loans/*.iml
+kafka-record-gen/target
+kafka-record-gen/.idea
+kafka-record-gen/*.iml
