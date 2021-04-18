@@ -464,3 +464,4 @@
 2021-04-17 14:03:16 INFO  KafkaProducerMain:80 - Produced account record: Account{AccountId=1, AccountType=1}
 2021-04-17 14:04:21 INFO  KafkaProducerMain:99 - Produced loan record: Loan{LoanId=1, AccountId=1, Amount=10000.0}
 2021-04-17 14:05:36 INFO  KafkaProducerMain:80 - Produced account record: Account{AccountId=4, AccountType=1}
+2021-04-18 17:29:18 INFO  KafkaProducerMain:80 - Produced account record: Account{AccountId=1, AccountType=1}

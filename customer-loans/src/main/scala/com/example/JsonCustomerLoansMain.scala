@@ -4,13 +4,20 @@ import org.apache.spark.sql.{Column, DataFrame, Encoders, SparkSession}
 import org.apache.spark.sql.catalyst.util.IntervalUtils.IntervalUnit
 import org.apache.spark.sql.streaming.{DataStreamWriter, OutputMode, StreamingQuery, Trigger}
 import org.apache.spark.sql.functions._
+import scala.concurrent.duration._
 
 case class JsonAccount(AccountId:Long,AccountType:Int)
 case class JsonLoan(LoanId:Long,AccountId:Long,Amount:BigDecimal)
 case class JsonOutput(AccountType:Int,TotalCount:Int,TotalAmount:BigDecimal,LastMinuteCount:Int)
 
 object JsonCustomerLoansMain {
-  def outputToConsole(df:DataFrame, processingTime:String): StreamingQuery = {
+  val spark = SparkSession.builder
+    .config("enableHive", false)
+    .master("local")
+    .getOrCreate()
+  import spark.implicits._
+
+  def outputToConsole(df:DataFrame, processingTime:Duration): StreamingQuery = {
     println("Output to console")
     val query = df.
       writeStream.
@@ -45,12 +52,6 @@ object JsonCustomerLoansMain {
   }
 
   def main(args: Array[String]): Unit = {
-    val spark = SparkSession.builder
-      .config("enableHive", false)
-      .master("local")
-      .getOrCreate()
-    import spark.implicits._
-
     //    spark.sparkContext.setLogLevel("ERROR")
 
     val df = getDataFrame(spark, Seq("account_json","loan_json"))
@@ -66,13 +67,12 @@ object JsonCustomerLoansMain {
       .selectExpr("timestamp as LoanEventTime", "CAST(value as STRING)")
       .select($"LoanEventTime", from_json(col("value"),Encoders.product[JsonLoan].schema).alias("loan"))
       .selectExpr("LoanEventTime", "loan.*" )
-      .withColumn("LoanCount", lit(1))
       .withColumnRenamed("AccountId", "LoanAccountId")
 
     accountDF.printSchema()
     loanDF.printSchema()
 
-    val loanAggDF = loanDF
+    var loanAggDF = loanDF
       .join(
         accountDF,
         expr(
@@ -80,34 +80,29 @@ object JsonCustomerLoansMain {
             + " AND (" +
             " (LoanEventTime >= AccountEventTime AND LoanEventTime < AccountEventTime + interval 30 second) OR "
             + " (AccountEventTime >= LoanEventTime AND AccountEventTime < LoanEventTime + interval 30 second))"
+          )
         )
-      )
+      .select('LoanEventTime, 'LoanId, 'AccountType, 'Amount)
       .groupBy(
         $"AccountType",
-        window($"LoanEventTime", "1 minute"),
+        window($"LoanEventTime", "1 minute", "30 second")
       )
       .agg(
-        sum("Amount").as("TotalAmount"),
-        avg("LoanCount").as("LastMinuteCount")
+        sum("Amount").as("LastMinuteTotalAmount"),
+        count('LoanId).as("LastMinuteCount")
       )
+
+//    loanAggDF = loanAggDF
+//      .groupBy('AccountType)
+//      .agg(
+//        sum("LastMinuteCount").as("TotalCount"),
+//        sum("LastMinuteTotalAmount").as("TotalAmount"),
+//        last("LastMinuteCount").as("LastMinuteCount")
+//      )
 
     loanAggDF.printSchema()
 
-      val loanQuery = outputToConsole(loanAggDF, "1 minute")
-
-//    val loanQuery = loanDF
-//        .join(
-//          accountDF,
-//          expr(
-//            "LoanAccountId = AccountId "
-//              + " AND (" +
-//                " (LoanEventTime >= AccountEventTime AND LoanEventTime < AccountEventTime + interval 30 second) OR "
-//              + " (AccountEventTime >= LoanEventTime AND AccountEventTime < LoanEventTime + interval 30 second))"
-//          )
-//        ).withColumn("LastMinuteCount", sum("LoanCount").over(Window.partitionBy($"AccountType", "").
-//      orderBy(col("sal"), col("emp_name"), col("date").asc).
-//      rowsBetween(Long.MinValue, 0)
-//    ))
+    val loanQuery = outputToConsole(loanAggDF, 1.minutes)
 
     loanQuery.awaitTermination()
 
