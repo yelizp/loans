@@ -1,9 +1,10 @@
 package com.example
 
-import org.apache.spark.sql.{Column, DataFrame, Encoders, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoders, SparkSession}
 import org.apache.spark.sql.catalyst.util.IntervalUtils.IntervalUnit
-import org.apache.spark.sql.streaming.{DataStreamWriter, OutputMode, StreamingQuery, Trigger}
+import org.apache.spark.sql.streaming.{DataStreamWriter, GroupState, GroupStateTimeout, OutputMode, StreamingQuery, Trigger}
 import org.apache.spark.sql.functions._
+
 import scala.concurrent.duration._
 import org.apache.spark.sql.internal.SQLConf.SHUFFLE_PARTITIONS
 
@@ -79,6 +80,7 @@ object JsonCustomerLoansMain {
       .selectExpr("account.*" )
       .withColumnRenamed("EventTime","AccountEventTime")
       .withWatermark("AccountEventTime", delayThreshold.toString())
+      .dropDuplicates("AccountId")
 
     val loanDF = df.where("topic = 'loan_json'")
       .selectExpr("CAST(value as STRING)")
@@ -87,67 +89,54 @@ object JsonCustomerLoansMain {
       .withColumnRenamed("EventTime","LoanEventTime")
       .withColumnRenamed("AccountId", "LoanAccountId")
       .withWatermark("LoanEventTime", delayThreshold.toString())
-
-//        val query = outputToKafka(
-//          loanDF.select(
-//    //      accountDF.select(
-//            col("LoanId").cast("String").as("key"),
-//            to_json(
-//              struct(
-//                'LoanEventTime, 'LoanId, 'AccountId, 'Amount
-//              )
-//            ).cast("String").as("value")
-//          ),
-//          "output_json",
-//          1.minutes
-//        )
-//
-//    query.awaitTermination()
-
+      .dropDuplicates("LoanId")
 
     accountDF.printSchema()
     loanDF.printSchema()
 
-    var loanAggDF = loanDF
+//    var loanAggDF = loanDF
+//          .join(
+//            accountDF,
+//            expr(
+//              "LoanAccountId = AccountId"
+//              )
+//            )
+//          .select('LoanEventTime, 'AccountType, 'Amount)
+//      .groupByKey(event => event.getInt(1))
+//      .mapGroupsWithState[JsonOutput,JsonOutput](GroupStateTimeout.ProcessingTimeTimeout) {
+//        case (accountType: Int, itr: Iterator[JsonOutput],state: GroupState[JsonOutput]) => {
+//          state.setTimeoutDuration("1 minute")
+//        }
+//        case (_) => {
+//          throw new RuntimeException("Unexpected state")
+//        }
+//      }
+
+    import org.apache.spark.sql.streaming._
+
+    val loanAggDF = loanDF
       .join(
         accountDF,
         expr(
-          "LoanAccountId = AccountId "
+          "LoanAccountId = AccountId"
           )
         )
       .select('LoanEventTime, 'AccountType, 'Amount)
       .groupBy(
-        window($"LoanEventTime", "1 minute", "30 second").as("time"),
+        window($"LoanEventTime", "1 minute", "30 second"),
         $"AccountType"
       )
       .agg(
-        sum("Amount").as("LastMinuteTotalAmount"),
-        count("AccountType").as("LastMinuteCount")
+        sum("Amount").as("TotalAmount"),
+        count("AccountType").as("TotalCount")
       )
-//
-////    loanAggDF = loanAggDF
-////      .groupBy('AccountType)
-////      .agg(
-////        sum("LastMinuteCount").as("TotalCount"),
-////        sum("LastMinuteTotalAmount").as("TotalAmount"),
-////        last("LastMinuteCount").as("LastMinuteCount")
-////      )
-//
-////    loanAggDF.printSchema()
-//
-////    val loanQuery = outputToConsole(loanAggDF, 1.minutes)
-//
+
     val loanQuery = outputToKafka(
       loanAggDF.select(
-//      accountDF.select(
         col("AccountType").cast("String").as("key"),
         to_json(
           struct(
-            col("time.start"), 'AccountType, 'LastMinuteTotalAmount, 'LastMinuteCount
-//            col("time.start"), 'AccountType, 'LastMinuteTotalAmount, 'LastMinuteCount
-//            col("AccountType")
-//            ,col("LastMinuteTotalAmount")
-//            ,col("LastMinuteCount")
+            col("window.start"), 'AccountType, 'TotalAmount, 'TotalCount
           )
         ).cast("String").as("value")
       ),

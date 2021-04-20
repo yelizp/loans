@@ -6,4 +6,4 @@ customer-loans/*.iml
 kafka-record-gen/target
 kafka-record-gen/.idea
 kafka-record-gen/*.iml
-kafka-record-gen/*.log
+kafka-record-gen/log4j-kafka-record-gen.log

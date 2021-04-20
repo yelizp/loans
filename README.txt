@@ -25,8 +25,11 @@ How to run:
 4. Start producer
     %PROJECT_ROOT%\kafka-record-gen\runProducer.bat
 5. Start console consumer to debug
+	Input streams:
     %KAFKA_HOME%\bin\windows\kafka-console-consumer.bat --bootstrap-server localhost:9092 --topic loan_json --from-beginning
     %KAFKA_HOME%\bin\windows\kafka-console-consumer.bat --bootstrap-server localhost:9092 --topic account_json --from-beginning
+	
+	Output stream:
 	%KAFKA_HOME%\bin\windows\kafka-console-consumer.bat --bootstrap-server localhost:9092 --topic output_json --from-beginning
 6. Start Spark Structured Streaming application
     %PROJECT_ROOT%\consumer-loans\run.bat
@@ -36,8 +39,11 @@ Restrictions:
 - Sorting, distinct or chained aggregations are not supported (since data is unbounded and Spark would need to keep all the data in order to support such aggregations)
 - Append and update are not supported on aggregations without watermark
 - Stream to stream joins are allowed only in append mode and append mode requires watermarking
+- Multiple aggregations on stream - stream joins are not supported
 
 Notes:
+- The application does not calculate last batch count. A foreach writer as Kafka Sink might have solved the problem of calcutating last batch count, however, I'm out of time to make the modifications
+
 - I have put a great deal of effort to read Avro message from Confluent Kafka (see AvroConsumerLoansMain), but it turns out that Confluent Avro and Spark
 Avro serialization / deserialization formats are not compatible.
 
