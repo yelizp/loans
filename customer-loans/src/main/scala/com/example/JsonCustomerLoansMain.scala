@@ -5,17 +5,33 @@ import org.apache.spark.sql.catalyst.util.IntervalUtils.IntervalUnit
 import org.apache.spark.sql.streaming.{DataStreamWriter, OutputMode, StreamingQuery, Trigger}
 import org.apache.spark.sql.functions._
 import scala.concurrent.duration._
+import org.apache.spark.sql.internal.SQLConf.SHUFFLE_PARTITIONS
 
-case class JsonAccount(AccountId:Long,AccountType:Int)
-case class JsonLoan(LoanId:Long,AccountId:Long,Amount:BigDecimal)
+case class JsonAccount(AccountId:Long,AccountType:Int, EventTime:java.sql.Timestamp)
+case class JsonLoan(LoanId:Long,AccountId:Long,Amount:BigDecimal, EventTime:java.sql.Timestamp)
 case class JsonOutput(AccountType:Int,TotalCount:Int,TotalAmount:BigDecimal,LastMinuteCount:Int)
 
 object JsonCustomerLoansMain {
+  val numShufflePartitions = 1
+  val delayThreshold = 30.seconds
+
   val spark = SparkSession.builder
     .config("enableHive", false)
-    .master("local")
+    .master("local[1]")
     .getOrCreate()
   import spark.implicits._
+
+  spark.sessionState.conf.setConf(SHUFFLE_PARTITIONS, numShufflePartitions)
+
+  def outputToMemory(df:DataFrame, queryName:String): StreamingQuery = {
+    println("Output to memory")
+    val query = df.
+      writeStream.
+      format("memory").
+      queryName(queryName).
+      start()
+    query
+  }
 
   def outputToConsole(df:DataFrame, processingTime:Duration): StreamingQuery = {
     println("Output to console")
@@ -30,16 +46,17 @@ object JsonCustomerLoansMain {
     query
   }
 
-  def outputToKafka(df:DataFrame,topic:String): Option[StreamingQuery] = {
-    println("Output to console")
+  def outputToKafka(df:DataFrame,topic:String, duration:Duration): StreamingQuery = {
+    println("Output to Kafka")
     val query = df.
-      selectExpr( topic,"CAST(key AS STRING)", "CAST(value as STRING)").
       writeStream.
       format("kafka").
       option("kafka.bootstrap.servers", "localhost:9092").
-      trigger(Trigger.ProcessingTime("5 seconds")).
+      option("checkPointLocation", "checkpoints").
+      option("topic", topic).
+      trigger(Trigger.ProcessingTime(duration)).
       start()
-    Some(query)
+    query
   }
 
   def getDataFrame(spark:SparkSession, topics:Seq[String]) : DataFrame = {
@@ -57,17 +74,36 @@ object JsonCustomerLoansMain {
     val df = getDataFrame(spark, Seq("account_json","loan_json"))
 
     val accountDF = df.where("topic = 'account_json'")
-      .withWatermark("timestamp", "30 seconds")
-      .selectExpr("timestamp as AccountEventTime", "CAST(value as STRING)")
-      .select($"AccountEventTime", from_json(col("value"),Encoders.product[JsonAccount].schema).alias("account"))
-      .selectExpr("AccountEventTime", "account.*" )
+      .selectExpr("CAST(value as STRING)")
+      .select(from_json(col("value"),Encoders.product[JsonAccount].schema).alias("account"))
+      .selectExpr("account.*" )
+      .withColumnRenamed("EventTime","AccountEventTime")
+      .withWatermark("AccountEventTime", delayThreshold.toString())
 
     val loanDF = df.where("topic = 'loan_json'")
-      .withWatermark("timestamp", "30 seconds")
-      .selectExpr("timestamp as LoanEventTime", "CAST(value as STRING)")
-      .select($"LoanEventTime", from_json(col("value"),Encoders.product[JsonLoan].schema).alias("loan"))
-      .selectExpr("LoanEventTime", "loan.*" )
+      .selectExpr("CAST(value as STRING)")
+      .select(from_json(col("value"),Encoders.product[JsonLoan].schema).alias("loan"))
+      .selectExpr("loan.*" )
+      .withColumnRenamed("EventTime","LoanEventTime")
       .withColumnRenamed("AccountId", "LoanAccountId")
+      .withWatermark("LoanEventTime", delayThreshold.toString())
+
+//        val query = outputToKafka(
+//          loanDF.select(
+//    //      accountDF.select(
+//            col("LoanId").cast("String").as("key"),
+//            to_json(
+//              struct(
+//                'LoanEventTime, 'LoanId, 'AccountId, 'Amount
+//              )
+//            ).cast("String").as("value")
+//          ),
+//          "output_json",
+//          1.minutes
+//        )
+//
+//    query.awaitTermination()
+
 
     accountDF.printSchema()
     loanDF.printSchema()
@@ -77,34 +113,47 @@ object JsonCustomerLoansMain {
         accountDF,
         expr(
           "LoanAccountId = AccountId "
-            + " AND (" +
-            " (LoanEventTime >= AccountEventTime AND LoanEventTime < AccountEventTime + interval 30 second) OR "
-            + " (AccountEventTime >= LoanEventTime AND AccountEventTime < LoanEventTime + interval 30 second))"
           )
         )
-      .select('LoanEventTime, 'LoanId, 'AccountType, 'Amount)
+      .select('LoanEventTime, 'AccountType, 'Amount)
       .groupBy(
-        $"AccountType",
-        window($"LoanEventTime", "1 minute", "30 second")
+        window($"LoanEventTime", "1 minute", "30 second").as("time"),
+        $"AccountType"
       )
       .agg(
         sum("Amount").as("LastMinuteTotalAmount"),
-        count('LoanId).as("LastMinuteCount")
+        count("AccountType").as("LastMinuteCount")
       )
-
-//    loanAggDF = loanAggDF
-//      .groupBy('AccountType)
-//      .agg(
-//        sum("LastMinuteCount").as("TotalCount"),
-//        sum("LastMinuteTotalAmount").as("TotalAmount"),
-//        last("LastMinuteCount").as("LastMinuteCount")
-//      )
-
-    loanAggDF.printSchema()
-
-    val loanQuery = outputToConsole(loanAggDF, 1.minutes)
-
+//
+////    loanAggDF = loanAggDF
+////      .groupBy('AccountType)
+////      .agg(
+////        sum("LastMinuteCount").as("TotalCount"),
+////        sum("LastMinuteTotalAmount").as("TotalAmount"),
+////        last("LastMinuteCount").as("LastMinuteCount")
+////      )
+//
+////    loanAggDF.printSchema()
+//
+////    val loanQuery = outputToConsole(loanAggDF, 1.minutes)
+//
+    val loanQuery = outputToKafka(
+      loanAggDF.select(
+//      accountDF.select(
+        col("AccountType").cast("String").as("key"),
+        to_json(
+          struct(
+            col("time.start"), 'AccountType, 'LastMinuteTotalAmount, 'LastMinuteCount
+//            col("time.start"), 'AccountType, 'LastMinuteTotalAmount, 'LastMinuteCount
+//            col("AccountType")
+//            ,col("LastMinuteTotalAmount")
+//            ,col("LastMinuteCount")
+          )
+        ).cast("String").as("value")
+      ),
+      "output_json",
+      1.minutes
+    )
     loanQuery.awaitTermination()
-
   }
 }

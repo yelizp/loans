@@ -76,7 +76,7 @@ public class KafkaProducerMain {
         Producer<Long, String> producer = null;
         try {
             producer = new org.apache.kafka.clients.producer.KafkaProducer<>(props);
-            producer.send(new ProducerRecord<Long, String>("account_json", account.getAccountId(), new Gson().toJson(account)));
+            producer.send(new ProducerRecord<Long, String>("account_json", account.getAccountId(), account.toJsonWithEventTime()));
             logger.info("Produced account record: " + account.toString());
         } catch (Exception e) {
             logger.error("Error producing account record: " + account.toString());
@@ -95,7 +95,7 @@ public class KafkaProducerMain {
         Producer<Long, String> producer = null;
         try {
             producer = new org.apache.kafka.clients.producer.KafkaProducer<>(props);
-            producer.send(new ProducerRecord<Long, String>("loan_json", loan.getLoanId(), new Gson().toJson(loan)));
+            producer.send(new ProducerRecord<Long, String>("loan_json", loan.getLoanId(), loan.toJsonWithEventTime()));
             logger.info("Produced loan record: " + loan.toString());
         } catch (Exception e) {
             logger.error("Error producing loan record: " + loan.toString());
